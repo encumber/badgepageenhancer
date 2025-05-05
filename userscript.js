@@ -22,8 +22,6 @@
     const STEAMSETS_API_CALL_DELAY_MS = 1000; // 1 second delay before Steamsets API calls
     const STEAM_API_CALL_DELAY_MS = 200; // 200ms delay between Steam's ajaxgetbadgeinfo calls
     const CACHE_EXPIRATION_MS = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
-    let isScriptEnabled = GM_getValue(SCRIPT_TOGGLE_KEY, true); // Default script enabled to true
-    let isRequeueButtonEnabled = GM_getValue(REQUEUE_BUTTON_TOGGLE_KEY, false); // Default re-queue button enabled to true
     const SCRIPT_TOGGLE_KEY = 'steamBadgeEnhancerEnabled'; // Key for the main script toggle
     const REQUEUE_BUTTON_TOGGLE_KEY = 'steamBadgeRequeueButtonEnabled'; // Key for the re-queue button toggle
 
@@ -35,6 +33,8 @@
 
     // Get the current state of the toggle settings
 
+    let isScriptEnabled = GM_getValue(SCRIPT_TOGGLE_KEY, true); // Default script enabled to true
+    let isRequeueButtonEnabled = GM_getValue(REQUEUE_BUTTON_TOGGLE_KEY, false); // Default re-queue button enabled to true
      // Variable to hold the IndexedDB database instance
     let db = null;
 
