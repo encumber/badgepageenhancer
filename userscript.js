@@ -16,7 +16,7 @@
     'use strict';
 
     // --- Configuration ---
-    const STEAMSETS_API_KEY = 'ss_2UqHUVpfEn5s9BQCdUEevNfjzsTx9bVXFSmYX9XLwCoF5o'; // Get api key from https://steamsets.com/settings/developer-apps
+    const STEAMSETS_API_KEY = ''; // Get api key from https://steamsets.com/settings/developer-apps
     const STEAMSETS_API_URL = 'https://api.steamsets.com/v1/app.listBadges';
     const STEAM_BADGE_INFO_URL = 'https://steamcommunity.com/my/ajaxgetbadgeinfo/';
     const STEAMSETS_API_CALL_DELAY_MS = 1000; // 1 second delay before Steamsets API calls
