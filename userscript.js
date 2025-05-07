@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Steam Badge Enhancer
 // @namespace    https://github.com/encumber
-// @version      2.0 
-// @description  Enhances Steam badges with detailed data, crafted highlight, IndexedDB for local caching, immediate cached display, and optional manual re-queue button.
+// @version      2.1
+// @description  Enhances Steam badges with detailed data, crafted highlight, IndexedDB for local caching, immediate cached display, and optional manual re-queue button. Seamless data hot-swapping during background refresh.
 // @author       Nitoned
 // @match        https://steamcommunity.com/*/badges/*
 // @match        https://steamcommunity.com/*/badges*
@@ -32,9 +32,8 @@
     // --- End Configuration ---
 
     // Get the current state of the toggle settings
-
     let isScriptEnabled = GM_getValue(SCRIPT_TOGGLE_KEY, true); // Default script enabled to true
-    let isRequeueButtonEnabled = GM_getValue(REQUEUE_BUTTON_TOGGLE_KEY, false); // Default re-queue button enabled to true
+    let isRequeueButtonEnabled = GM_getValue(REQUEUE_BUTTON_TOGGLE_KEY, true); // Default re-queue button enabled to true
      // Variable to hold the IndexedDB database instance
     let db = null;
 
@@ -254,6 +253,8 @@
             padding-top: 10px;
             border-top: 1px solid #303030; /* Separator line */
             width: 100%; /* Take full width of the badge row */
+             min-height: 80px; /* Ensure container has some height even when empty or loading */
+             position: relative; /* Needed for absolute positioned loading indicators */
         }
 
         .badge_info_container {
@@ -307,14 +308,14 @@
 
         /* Style for the re-queue button */
         .requeue_button {
-            margin-top: 10px;
             padding: 3px 8px;
-            background-color: #303030;
-            color: #c6d4df;
+            max-width: 15px;
+            background-color: #22558f;
+            color: #ffffff;
             border: 1px solid #505050;
             border-radius: 3px;
             cursor: pointer;
-            font-size: 0.7em;
+            font-size: 1.3em;
             text-align: center;
              /* IMPORTANT: Stop click event propagation */
             z-index: 99999; /* Increased z-index */
@@ -333,6 +334,22 @@
              width: 100%;
              display: block;
              text-align: center;
+         }
+
+         /* Style for the loading overlay */
+         .enhancer_loading_overlay {
+              position: absolute;
+              top: 0;
+              left: 0;
+              right: 0;
+              bottom: 0;
+              background-color: rgba(0, 0, 0, 0.7); /* Semi-transparent dark overlay */
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              color: white;
+              font-size: 1.2em;
+              z-index: -10; /* Above badge details but below the container */
          }
 
     `);
@@ -502,12 +519,14 @@
     const fetchQueue = [];
      // Flag to prevent multiple fetch loops running simultaneously
     let isFetching = false;
+     // Set to track App IDs currently being fetched
+    const currentlyFetching = new Set();
 
 
      // Function to add an App ID to the fetch queue
      function queueAppIdForFetch(appId) {
          // Only add if not already in the queue or being processed
-         if (!fetchQueue.includes(appId) && !isFetchingThisAppId(appId)) {
+         if (!fetchQueue.includes(appId) && !currentlyFetching.has(appId)) {
               fetchQueue.push(appId);
               console.log(`App ID ${appId} added to fetch queue. Queue size: ${fetchQueue.length}`);
               // If not already fetching, start the fetch loop
@@ -518,14 +537,6 @@
               // console.log(`App ID ${appId} is already in the fetch queue or being fetched.`); // Too chatty
          }
      }
-
-    // Helper to check if an App ID is currently being fetched
-    function isFetchingThisAppId(appId) {
-        // This is a simplified check. A more robust way would track the currently processed App ID
-        // but for this script's queue structure, checking the start of the queue is sufficient
-        return isFetching && fetchQueue[0] === appId;
-    }
-
 
     // Main function to process the fetch queue
     async function processFetchQueue() {
@@ -538,31 +549,40 @@
 
         while (fetchQueue.length > 0) {
             const appId = fetchQueue[0]; // Peek at the next App ID
+
+            // Ensure the App ID is added to the currentlyFetching set before processing
+            currentlyFetching.add(appId);
+
             const rowsForApp = badgeRowsByAppId.get(appId) || [];
 
             if (rowsForApp.length === 0) {
                 console.log(`No badge rows found for App ID ${appId} in badgeRowsByAppId map for fetch. Removing from queue.`);
                  fetchQueue.shift(); // Remove the item if no rows found
+                 currentlyFetching.delete(appId); // Remove from fetching set
                 continue; // Skip
             }
 
             console.log(`Processing App ID ${appId} from fetch queue.`);
 
-             // Add loading indicator (or update existing one)
+             // Add loading indicator overlay to each row
             rowsForApp.forEach(badgeRow => {
                  let enhancedBadgeDetailsContainer = badgeRow.querySelector('.enhanced_badge_details_container');
                  if (!enhancedBadgeDetailsContainer) {
-                     // This shouldn't happen if initialSetup ran, but as a fallback
-                     enhancedBadgeDetailsContainer = document.createElement('div');
-                     enhancedBadgeDetailsContainer.classList.add('enhanced_badge_details_container');
-                     badgeRow.appendChild(enhancedBadgeDetailsContainer);
+                     console.error(`Container not found for App ID ${appId} during fetch process.`);
+                     return; // Skip this row if container is missing (shouldn't happen after initialSetup)
                  }
-                 // Clear existing content and add loading indicator
-                 enhancedBadgeDetailsContainer.innerHTML = '';
-                 const loadingIndicator = document.createElement('div');
-                 loadingIndicator.classList.add('initial_indicator'); // Use a general indicator class
-                 loadingIndicator.textContent = "Updating data...";
-                 enhancedBadgeDetailsContainer.appendChild(loadingIndicator);
+
+                 // Check if an overlay already exists
+                 let loadingOverlay = enhancedBadgeDetailsContainer.querySelector('.enhancer_loading_overlay');
+                 if (!loadingOverlay) {
+                     loadingOverlay = document.createElement('div');
+                     loadingOverlay.classList.add('enhancer_loading_overlay');
+                     loadingOverlay.textContent = "Updating data...";
+                     enhancedBadgeDetailsContainer.appendChild(loadingOverlay);
+                 } else {
+                     loadingOverlay.textContent = "Updating data..."; // Update text if it exists
+                     loadingOverlay.style.display = 'flex'; // Ensure it's visible
+                 }
             });
 
 
@@ -589,10 +609,21 @@
             // Store fetched data in IndexedDB
             await setCacheEntry(appId, cacheEntry); // Use the new IndexedDB set function
 
-             fetchQueue.shift(); // Remove the item from the queue AFTER successful fetch and cache
-
-            // Display the updated data
+             // Display the updated data *before* removing the overlay
             displayBadgeDetails(appId, rowsForApp, badgeData, craftedNormalInfo, craftedFoilInfo, false); // Displaying fresh data
+
+            // Remove the loading overlay after displaying new data
+             rowsForApp.forEach(badgeRow => {
+                 const enhancedBadgeDetailsContainer = badgeRow.querySelector('.enhanced_badge_details_container');
+                 const loadingOverlay = enhancedBadgeDetailsContainer ? enhancedBadgeDetailsContainer.querySelector('.enhancer_loading_overlay') : null;
+                 if (loadingOverlay) {
+                     loadingOverlay.remove(); // Remove the overlay element
+                 }
+             });
+
+
+             fetchQueue.shift(); // Remove the item from the queue AFTER successful fetch and cache
+             currentlyFetching.delete(appId); // Remove from fetching set
 
         }
 
@@ -609,7 +640,11 @@
         rowsForApp.forEach(badgeRow => {
              const container = badgeRow.querySelector('.enhanced_badge_details_container');
              if(container) {
-                 container.innerHTML = ''; // Clear its current content (loading indicator or old data)
+                 // Keep the container, but replace its *content* (excluding the overlay if it exists)
+                 const loadingOverlay = container.querySelector('.enhancer_loading_overlay'); // Find existing overlay
+
+                 // Create a temporary container to hold the new badge details HTML
+                 const tempDiv = document.createElement('div');
 
                  if (badgeData.length > 0) {
                      // Sort badges: Levels 1-5 (non-foil) then Foil
@@ -646,62 +681,69 @@
                          `;
                      }).join(''); // Join the array of HTML strings into a single string
 
-                     // Set the innerHTML of the container
-                     container.innerHTML = detailedBadgesHtml;
-
-                     // Add the re-queue button if enabled
-                     if (isRequeueButtonEnabled) {
-                          const requeueButton = document.createElement('div');
-                          requeueButton.classList.add('requeue_button');
-                          requeueButton.textContent = 'Re-queue Data Fetch';
-                          // Store the appId on the button for easy access in the event listener
-                          requeueButton.dataset.appId = appId;
-                          container.appendChild(requeueButton);
-
-                          // Add click listener to the button
-                          requeueButton.addEventListener('click', handleRequeueClick);
-                     }
-
+                     tempDiv.innerHTML = detailedBadgesHtml;
 
                  } else {
                       console.log(`No detailed badge data found for appId ${appId}. Displaying "No data available".`);
-                      // Display a message and the re-queue button (if enabled)
+                      // Display a message
                       const noDataMessage = document.createElement('div');
                       noDataMessage.textContent = `No detailed badge data available for this game (App ID: ${appId}).`;
                       noDataMessage.style.color = '#8f98a0';
                       noDataMessage.style.margin = '10px auto'; // Center the message
-                      container.appendChild(noDataMessage);
-
-                       // Add the re-queue button if enabled
-                     if (isRequeueButtonEnabled) {
-                          const requeueButton = document.createElement('div');
-                          requeueButton.classList.add('requeue_button');
-                          requeueButton.textContent = 'Re-queue Data Fetch';
-                           // Store the appId on the button
-                          requeueButton.dataset.appId = appId;
-                          container.appendChild(requeueButton);
-
-                           // Add click listener
-                          requeueButton.addEventListener('click', handleRequeueClick);
-                     }
+                      tempDiv.appendChild(noDataMessage);
                  }
 
-                  // Add a visual indicator if data was from cache
-                  if (isCached) {
-                       const cachedIndicator = document.createElement('div');
-                       cachedIndicator.textContent = `⠀`;
-                       cachedIndicator.style.fontSize = '0.7em';
-                       cachedIndicator.style.color = '#8f98a0';
-                       cachedIndicator.style.textAlign = 'center';
-                       cachedIndicator.style.marginTop = '5px';
-                        // Prepend to the container to appear above the badge details
-                       container.insertBefore(cachedIndicator, container.firstChild);
-                  }
+                 // Add a visual indicator if data was from cache
+                 if (isCached) {
+                      const cachedIndicator = document.createElement('div');
+                      cachedIndicator.textContent = `⠀`; // Text indicating cache
+                      cachedIndicator.style.fontSize = '0.7em';
+                      cachedIndicator.style.color = '#8f98a0';
+                      cachedIndicator.style.textAlign = 'center';
+                      cachedIndicator.style.marginTop = '5px';
+                       // Prepend to the temporary container
+                       tempDiv.insertBefore(cachedIndicator, tempDiv.firstChild);
+                 }
+
+                 // Replace the *content* of the main container with the content from tempDiv
+                 // This avoids removing and re-adding the container itself or the overlay
+                 while(container.firstChild && container.firstChild !== loadingOverlay) {
+                     container.removeChild(container.firstChild);
+                 }
+                 while(tempDiv.firstChild) {
+                     container.insertBefore(tempDiv.firstChild, loadingOverlay); // Insert before the overlay if it exists
+                 }
+
+
+                  // Add the re-queue button if enabled, ENSURING IT DOESN'T ALREADY EXIST
+                  // This part remains the same as it's added to badge_title_stats, not the enhanced_badge_details_container
+                     if (isRequeueButtonEnabled) {
+                          const badgeTitleStatsContainer = badgeRow.querySelector('.badge_title_stats');
+                          // Check if a re-queue button already exists within this container
+                          const existingRequeueButton = badgeTitleStatsContainer ? badgeTitleStatsContainer.querySelector('.requeue_button') : null;
+
+                          if (badgeTitleStatsContainer && !existingRequeueButton) { // Only add if container exists and button doesn't exist
+                               const requeueButton = document.createElement('div');
+                               requeueButton.classList.add('requeue_button');
+                               requeueButton.textContent = ' ↻​ ';
+                               // Store the appId on the button for easy access in the event listener
+                               requeueButton.dataset.appId = appId;
+                               badgeTitleStatsContainer.appendChild(requeueButton);
+
+                               // Add click listener to the button
+                               requeueButton.addEventListener('click', handleRequeueClick);
+                          } else if (!badgeTitleStatsContainer) {
+                               console.warn(`Could not find .badge_title_stats container for App ID ${appId} to add re-queue button.`);
+                          }
+                     }
+
+
              } else {
                  console.error(`Could not find .enhanced_badge_details_container for App ID ${appId} during display.`);
              }
         });
     }
+
 
      // Event handler for the re-queue button
      function handleRequeueClick(event) {
@@ -718,6 +760,20 @@
          }
      }
 
+    // Function to delete elements with class 'badge_title_stats_drops' and 'badge_title_stats_playtime'
+    function deleteBadgeStats() {
+        const dropsElements = document.querySelectorAll('.badge_title_stats_drops');
+        dropsElements.forEach(element => {
+            element.remove();
+            // console.log("Removed element with class 'badge_title_stats_drops'"); // Too chatty
+        });
+        const playtimeElements = document.querySelectorAll('.badge_title_stats_playtime');
+         playtimeElements.forEach(element => {
+             element.remove();
+             // console.log("Removed element with class 'badge_title_stats_playtime'"); // Too chatty
+         });
+    }
+
 
     // Initial setup: Collect all badge rows, display cached, and queue uncached/expired
     async function initialSetup() { // Make initialSetup async because it awaits openDatabase and getCacheEntry
@@ -728,6 +784,8 @@
          // Check if the script is enabled AFTER adding toggle buttons
          if (!isScriptEnabled) {
              console.log("Steam Badge Enhancer is disabled. Toggle buttons are available.");
+              // Still delete the unnecessary stats elements even if enhancement is disabled
+             deleteBadgeStats();
              return; // Exit the function if disabled
          }
 
@@ -743,6 +801,9 @@
          }
          // --- End IndexedDB Initialization ---
 
+        // Delete the unnecessary stats elements immediately
+        deleteBadgeStats();
+
 
         const allBadgeRows = document.querySelectorAll('.badge_row.is_link');
 
@@ -754,6 +815,8 @@
                     badgeRowsByAppId.set(appId, []);
                 }
                 badgeRowsByAppId.get(appId).push(badgeRow);
+            } else {
+                 console.warn("Could not extract App ID from a badge row:", badgeRow);
             }
         });
 
@@ -773,8 +836,10 @@
              rowsForApp.forEach(badgeRow => {
                  const enhancedBadgeDetailsContainer = document.createElement('div');
                  enhancedBadgeDetailsContainer.classList.add('enhanced_badge_details_container');
+                 // Add an initial indicator message
                  const initialIndicator = document.createElement('div');
                  initialIndicator.classList.add('initial_indicator');
+                 initialIndicator.textContent = "Checking cache..."; // Initial state
                  enhancedBadgeDetailsContainer.appendChild(initialIndicator);
                  badgeRow.appendChild(enhancedBadgeDetailsContainer);
              });
@@ -785,13 +850,15 @@
 
              if (isCacheValid(cachedEntry)) {
                   console.log(`Found valid cache for App ID: ${appId}. Displaying immediately.`);
-                  // Update indicator to reflect cache loading
-                   rowsForApp.forEach(badgeRow => {
-                        const indicator = badgeRow.querySelector('.enhanced_badge_details_container .initial_indicator');
-                        if(indicator) indicator.textContent = "Loading from cache...";
-                   });
                  // Immediately display cached data
                  displayBadgeDetails(appId, rowsForApp, cachedEntry.steamsetsData, cachedEntry.craftedNormalInfo, cachedEntry.craftedFoilInfo, true);
+                 // Queue for background refresh if cache is old but still valid
+                 const now = Date.now();
+                 if ((now - cachedEntry.timestamp) > (CACHE_EXPIRATION_MS / 2)) { // Example: refresh if cache is older than half the expiration time
+                     console.log(`Cache for App ID ${appId} is older than half the expiration, queueing for background refresh.`);
+                     queueAppIdForFetch(appId);
+                 }
+
 
              } else {
                   console.log(`No valid cache for App ID: ${appId}. Queueing for fetch.`);
